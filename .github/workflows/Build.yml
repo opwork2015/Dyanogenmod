@@ -1,91 +1,80 @@
-name: Download, unzip and unpack system/data
+name: Download, unzip and unpack ROM
 
 on:
   workflow_dispatch:
-    inputs:
-      mediafire_url:
-        description: "MediaFire page link"
-        required: true
-        default: "https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
-        type: string
 
 jobs:
-  unpack:
+  rom:
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 180
 
     steps:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3
+          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3 curl unzip
           curl -L -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
 
-      - name: Resolve MediaFire direct link
+      - name: Download from MediaFire
         run: |
-          curl -sL -A "Mozilla/5.0" "${{ inputs.mediafire_url }}" -o page.html
+          URL="https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
+          curl -sL -A "Mozilla/5.0" "$URL" -o page.html
           DIRECT=$(grep -oE 'https://download[^"]+' page.html | head -1)
           if [ -z "$DIRECT" ]; then
             echo "::error::Direct link not found on MediaFire page"
             exit 1
           fi
-          echo "DIRECT=$DIRECT" >> $GITHUB_ENV
+          curl -L -A "Mozilla/5.0" -o Stock_ROM_Advanced.zip "$DIRECT"
+          ls -lh Stock_ROM_Advanced.zip
+          unzip -tq Stock_ROM_Advanced.zip
 
-      - name: Download ROM
-        run: |
-          curl -L -A "Mozilla/5.0" -o stock.zip "$DIRECT"
-          ls -lh stock.zip
-          unzip -tq stock.zip
-
-      - name: Unzip ROM completely
+      - name: Unzip ROM fully into rom/
         run: |
           mkdir -p rom
-          unzip -q stock.zip -d rom
-          find rom -type f -exec ls -lh {} \;
+          unzip -q Stock_ROM_Advanced.zip -d rom
+          find rom -maxdepth 2 -exec ls -ld {} \; | head -100
 
-      # system: من system.img أو system.new.dat
-      - name: Unpack system
+      - name: Unpack system into rom/system
         run: |
-          mkdir -p out/system
-          if [ -f rom/system.img ]; then
-            simg2img rom/system.img system.raw.img || cp rom/system.img system.raw.img
-          elif [ -f rom/system.new.dat ]; then
-            python3 sdat2img.py rom/system.transfer.list rom/system.new.dat system.raw.img
+          mkdir -p rom/system
+          SRC=$(find rom -name "system.img" -o -name "system.new.dat" | head -1)
+          if [ -n "$(find rom -name 'system.img' | head -1)" ]; then
+            IMG=$(find rom -name "system.img" | head -1)
+            simg2img "$IMG" system.raw.img || cp "$IMG" system.raw.img
+          elif [ -n "$(find rom -name 'system.new.dat' | head -1)" ]; then
+            LIST=$(find rom -name "system.transfer.list" | head -1)
+            DAT=$(find rom -name "system.new.dat" | head -1)
+            python3 sdat2img.py "$LIST" "$DAT" system.raw.img
           else
-            echo "::error::No system image or system.new.dat found"; exit 1
+            echo "::error::No system image found in ROM"
+            exit 1
           fi
-          7z x -y system.raw.img -oout/system > /dev/null
-          echo "system files: $(find out/system -type f | wc -l)"
+          7z x -y system.raw.img -orom/system > /dev/null || true
+          echo "system files: $(find rom/system -type f | wc -l)"
 
-      # data: من data.img أو data.new.dat أو userdata.img
-      - name: Unpack data
+      - name: Unpack data into rom/data
         run: |
-          mkdir -p out/data
-          if [ -f rom/data.img ]; then
-            simg2img rom/data.img data.raw.img || cp rom/data.img data.raw.img
-          elif [ -f rom/userdata.img ]; then
-            simg2img rom/userdata.img data.raw.img || cp rom/userdata.img data.raw.img
-          elif [ -f rom/data.new.dat ]; then
-            python3 sdat2img.py rom/data.transfer.list rom/data.new.dat data.raw.img
+          mkdir -p rom/data
+          if [ -n "$(find rom -name 'data.img' | head -1)" ]; then
+            IMG=$(find rom -name "data.img" | head -1)
+            simg2img "$IMG" data.raw.img || cp "$IMG" data.raw.img
+          elif [ -n "$(find rom -name 'userdata.img' | head -1)" ]; then
+            IMG=$(find rom -name "userdata.img" | head -1)
+            simg2img "$IMG" data.raw.img || cp "$IMG" data.raw.img
+          elif [ -n "$(find rom -name 'data.new.dat' | head -1)" ]; then
+            LIST=$(find rom -name "data.transfer.list" | head -1)
+            DAT=$(find rom -name "data.new.dat" | head -1)
+            python3 sdat2img.py "$LIST" "$DAT" data.raw.img
           else
-            echo "::warning::No data image found"; exit 0
+            echo "::warning::No data image found, skipping"
+            exit 0
           fi
-          7z x -y data.raw.img -oout/data > /dev/null
-          echo "data files: $(find out/data -type f | wc -l)"
+          7z x -y data.raw.img -orom/data > /dev/null || true
+          echo "data files: $(find rom/data -type f | wc -l)"
 
-      - name: Pack results
-        run: |
-          (cd rom && zip -qr ../full-rom-unzipped.zip .)
-          (cd out/system && zip -qr ../../system-unpacked.zip .)
-          (cd out/data && zip -qr ../../data-unpacked.zip .) || true
-          ls -lh *.zip
-
-      - name: Upload
+      - name: Upload rom folder
         uses: actions/upload-artifact@v4
         with:
-          name: rom-unpacked
-          path: |
-            full-rom-unzipped.zip
-            system-unpacked.zip
-            data-unpacked.zip
+          name: rom-folder
+          path: rom
           retention-days: 14
