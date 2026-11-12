@@ -1,0 +1,4 @@
+# Blobs from SM-J500FN stock firmware, one path per line.
+# Example:
+# vendor/lib/libril.so
+# vendor/firmware/wcnss.mbn
