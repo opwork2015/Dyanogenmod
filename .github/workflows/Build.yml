@@ -1,76 +1,88 @@
-name: Download, unzip and commit stock ROM
+name: Unpack system and data
 
 on:
   workflow_dispatch:
     inputs:
-      mediafire_url:
-        description: "MediaFire page link"
-        required: true
-        default: "https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
-        type: string
-      target_folder:
-        description: "Folder in the repo to store the unzipped ROM"
+      source_folder:
+        description: "Folder in the repo that holds the ROM files"
         required: true
         default: "stock-rom"
         type: string
 
-permissions:
-  contents: write
-
 jobs:
-  download-unzip-commit:
+  unpack:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          lfs: false
 
-      # 1. استخراج الرابط المباشر من صفحة MediaFire
-      - name: Resolve direct link
+      - name: Install tools
         run: |
-          curl -sL -A "Mozilla/5.0" "${{ inputs.mediafire_url }}" -o page.html
-          DIRECT=$(grep -oE 'https://download[^"]+' page.html | head -1)
-          if [ -z "$DIRECT" ]; then
-            echo "::error::Could not find direct link on MediaFire page"
-            exit 1
-          fi
-          echo "DIRECT=$DIRECT" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3 curl
+          curl -L -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
 
-      # 2. تنزيل الملف
-      - name: Download ROM
+      - name: Check source files
         run: |
-          curl -L -A "Mozilla/5.0" -o stock.zip "$DIRECT"
-          ls -lh stock.zip
-          unzip -tq stock.zip
+          ls -lh "${{ inputs.source_folder }}"
+          test -d "${{ inputs.source_folder }}" || (echo "::error::folder not found" && exit 1)
 
-      # 3. فك الملف داخل مجلد الهدف
-      - name: Unzip ROM
+      # 1. تحويل system إلى صورة ext4 خام
+      - name: Prepare system image
         run: |
-          mkdir -p "${{ inputs.target_folder }}"
-          unzip -q stock.zip -d "${{ inputs.target_folder }}"
-          find "${{ inputs.target_folder }}" -type f -exec ls -lh {} \; | head -80
-
-      # 4. حذف الملفات الأكبر من 95MB لأن GitHub يرفض ما فوق 100MB
-      - name: Remove files larger than 95MB
-        run: |
-          find "${{ inputs.target_folder }}" -type f -size +95M -print -delete > too_big.txt || true
-          if [ -s too_big.txt ]; then
-            echo "::warning::These files were skipped because GitHub limits files to 100MB:"
-            cat too_big.txt
-          fi
-
-      # 5. الالتزام بالمستودع ورفع الملفات
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "${{ inputs.target_folder }}"
-          if git diff --cached --quiet; then
-            echo "Nothing new to commit"
+          SRC="${{ inputs.source_folder }}"
+          if [ -f "$SRC/system.img" ]; then
+            simg2img "$SRC/system.img" system.raw.img || cp "$SRC/system.img" system.raw.img
+          elif [ -f "$SRC/system.new.dat" ]; then
+            python3 sdat2img.py "$SRC/system.transfer.list" "$SRC/system.new.dat" system.raw.img
           else
-            git commit -m "Add unzipped stock ROM to ${{ inputs.target_folder }}"
-            git push
+            echo "::error::No system image found"; exit 1
           fi
+          ls -lh system.raw.img
+
+      # 2. تحويل data إلى صورة ext4 خام (يدعم data.img و userdata.img و data.new.dat)
+      - name: Prepare data image
+        run: |
+          SRC="${{ inputs.source_folder }}"
+          if [ -f "$SRC/data.img" ]; then
+            simg2img "$SRC/data.img" data.raw.img || cp "$SRC/data.img" data.raw.img
+          elif [ -f "$SRC/userdata.img" ]; then
+            simg2img "$SRC/userdata.img" data.raw.img || cp "$SRC/userdata.img" data.raw.img
+          elif [ -f "$SRC/data.new.dat" ]; then
+            python3 sdat2img.py "$SRC/data.transfer.list" "$SRC/data.new.dat" data.raw.img
+          else
+            echo "::warning::No data image found, skipping"
+            exit 0
+          fi
+          ls -lh data.raw.img
+
+      # 3. فك system و data إلى مجلدات
+      - name: Extract folders
+        run: |
+          mkdir -p out/system out/data
+          7z x -y system.raw.img -oout/system > /dev/null || true
+          if [ -f data.raw.img ]; then 7z x -y data.raw.img -oout/data > /dev/null || true; fi
+          echo "system files: $(find out/system -type f | wc -l)"
+          echo "data files: $(find out/data -type f 2>/dev/null | wc -l)"
+          ls out/system
+          ls out/data 2>/dev/null || true
+
+      # 4. ضغط كل جزء في zip منفصل
+      - name: Pack zips
+        run: |
+          cd out/system && zip -qr ../../system-unpacked.zip . && cd ../..
+          if [ -d out/data ] && [ "$(ls -A out/data)" ]; then
+            cd out/data && zip -qr ../../data-unpacked.zip . && cd ../..
+          fi
+          ls -lh *.zip
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-and-data-unpacked
+          path: |
+            system-unpacked.zip
+            data-unpacked.zip
+          retention-days: 14
