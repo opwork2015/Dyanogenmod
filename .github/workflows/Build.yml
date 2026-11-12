@@ -1,0 +1,53 @@
+name: Merge system.zip
+
+on:
+  workflow_dispatch:
+
+jobs:
+  merge:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      # 1. تحميل المستودع
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. التحقق من وجود الملف المطلوب
+      - name: Check input
+        run: |
+          test -f input/system.zip || (echo "::error::input/system.zip not found" && exit 1)
+          ls -lh input/
+
+      # 3. فك system.zip داخل مجلد مؤقت
+      - name: Extract system.zip
+        run: |
+          mkdir -p tmp
+          unzip -q input/system.zip -d tmp
+          echo "Extracted files:"
+          find tmp -type f | head -50
+
+      # 4. إنشاء مجلد النظام الأساسي (إن لم يكن موجوداً) ودمج الملفات فيه
+      # الدمج يضيف الملفات الجديدة ويستبدل الملفات المتطابقة الأسماء
+      - name: Merge into base system
+        run: |
+          mkdir -p base/system
+          cp -r tmp/system/. base/system/
+          echo "Merged. Total files:"
+          find base -type f | wc -l
+
+      # 5. إعادة الضغط في ملف جديد
+      - name: Repack merged system
+        run: |
+          cd base
+          zip -qr ../merged-system.zip system
+          cd ..
+          ls -lh merged-system.zip
+
+      # 6. رفع الناتج
+      - name: Upload merged zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-system
+          path: merged-system.zip
+          retention-days: 14
