@@ -12,7 +12,7 @@ jobs:
       # 1. تحميل مصدر الكيرنل بنسخة خفيفة (آخر commit فقط)
       - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/opwork2015/android_kernel_samsung_msm8916.git kernel
+          git clone --depth=1 https://github.com/opwork2015/Dyanogenmod.git kernel
 
       # 2. تثبيت المترجم والأدوات المطلوبة للبناء
       - name: Install build tools
