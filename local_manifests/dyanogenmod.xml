@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Replace YOUR_GITHUB_USERNAME with your account -->
+  <project path="device/samsung/j5lte"
+           name="YOUR_GITHUB_USERNAME/android_device_samsung_j5lte"
+           remote="github"
+           revision="main" />
+  <project path="kernel/samsung/msm8916"
+           name="/android_kernel_samsung_msm8916"
+           remote="github"
+           revision="main" />
+</manifest>
