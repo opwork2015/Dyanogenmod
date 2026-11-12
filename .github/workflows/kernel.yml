@@ -1,4 +1,4 @@
-name: Build test kernel (ARM)
+name: Build kernel j500fn
 
 on:
   workflow_dispatch:
@@ -9,10 +9,10 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # 1. تحميل كيرنل Linux الرسمي (آخر نسخة فقط)
-      - name: Clone Linux kernel
+      # 1. تحميل كيرنل DJSteve لـ J500FN (آخر commit فقط)
+      - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/torvalds/linux.git kernel
+          git clone --depth=1 https://github.com/DJSteve/kernel_j500fn_djsteve.git kernel
 
       # 2. تثبيت المترجم والأدوات
       - name: Install build tools
@@ -20,31 +20,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libncurses-dev gcc-arm-linux-gnueabi
 
-      # 3. إنشاء الإعداد الافتراضي لمنصة ARM اختبارية
-      - name: Configure
+      # 3. البحث عن إعداد j5 تلقائياً (يفضّل j5nlte، ثم أي j5)
+      - name: Find j5 defconfig
         working-directory: kernel
-        env:
-          ARCH: arm
-          CROSS_COMPILE: arm-linux-gnueabi-
-        run: make vexpress_defconfig
+        run: |
+          DEF=$(ls arch/arm/configs | grep -i '^msm8916_sec_j5' | head -1)
+          if [ -z "$DEF" ]; then
+            echo "::error::No j5 defconfig found"
+            exit 1
+          fi
+          echo "Using defconfig: $DEF"
+          echo "DEF=$DEF" >> $GITHUB_ENV
 
       # 4. بناء الكيرنل
-      - name: Build
+      - name: Build kernel
         working-directory: kernel
         env:
           ARCH: arm
           CROSS_COMPILE: arm-linux-gnueabi-
-        run: make -j$(nproc) zImage
+        run: |
+          make $DEF
+          make -j$(nproc) zImage-dtb || make -j$(nproc) zImage
 
-      # 5. التحقق من الناتج
-      - name: Check output
-        working-directory: kernel
-        run: ls -lh arch/arm/boot/zImage
-
-      # 6. رفع الناتج
+      # 5. رفع الناتج
       - name: Upload kernel image
         uses: actions/upload-artifact@v4
         with:
-          name: test-kernel-arm
-          path: kernel/arch/arm/boot/zImage
+          name: kernel-j500fn
+          path: kernel/arch/arm/boot/zImage*
           retention-days: 14
