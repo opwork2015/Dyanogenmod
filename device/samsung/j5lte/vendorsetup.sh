@@ -1,0 +1,2 @@
+add_lunch_combo dyanogenmod_j5lte-userdebug
+add_lunch_combo dyanogenmod_j5lte-user
