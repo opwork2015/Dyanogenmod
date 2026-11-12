@@ -1,4 +1,4 @@
-name: Build kernel j5lte
+name: Build test kernel (ARM)
 
 on:
   workflow_dispatch:
@@ -9,39 +9,42 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # 1. تحميل مصدر الكيرنل بنسخة خفيفة (آخر commit فقط)
-      - name: Clone kernel source
+      # 1. تحميل كيرنل Linux الرسمي (آخر نسخة فقط)
+      - name: Clone Linux kernel
         run: |
-          git clone --depth=1 https://github.com/opwork2015/Dyanogenmod.git kernel
+          git clone --depth=1 https://github.com/torvalds/linux.git kernel
 
-      # 2. تثبيت المترجم والأدوات المطلوبة للبناء
+      # 2. تثبيت المترجم والأدوات
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libncurses-dev gcc-arm-linux-gnueabi
 
-      # 3. عرض أسماء الإعدادات المتاحة للتأكد من الاسم الصحيح
-      - name: List j5 configs
-        working-directory: kernel
-        run: ls arch/arm/configs | grep -i j5 || echo "No j5 config found"
-
-      # 4. ضبط الإعدادات وبناء الكيرنل
-      # غيّر DEFCONFIG إلى الاسم الذي ظهر في الخطوة السابقة
-      - name: Build kernel
+      # 3. إنشاء الإعداد الافتراضي لمنصة ARM اختبارية
+      - name: Configure
         working-directory: kernel
         env:
           ARCH: arm
           CROSS_COMPILE: arm-linux-gnueabi-
-          DEFCONFIG: msm8916_sec_j5lte_eur_defconfig
-        run: |
-          make $DEFCONFIG
-          make -j$(nproc)
+        run: make vexpress_defconfig
 
-      # 5. رفع الناتج لتحميله من صفحة Actions
+      # 4. بناء الكيرنل
+      - name: Build
+        working-directory: kernel
+        env:
+          ARCH: arm
+          CROSS_COMPILE: arm-linux-gnueabi-
+        run: make -j$(nproc) zImage
+
+      # 5. التحقق من الناتج
+      - name: Check output
+        working-directory: kernel
+        run: ls -lh arch/arm/boot/zImage
+
+      # 6. رفع الناتج
       - name: Upload kernel image
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-j5lte
-          path: |
-            kernel/arch/arm/boot/zImage*
+          name: test-kernel-arm
+          path: kernel/arch/arm/boot/zImage
           retention-days: 14
