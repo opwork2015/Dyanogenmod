@@ -1,88 +1,91 @@
-name: Unpack system and data
+name: Download, unzip and unpack system/data
 
 on:
   workflow_dispatch:
     inputs:
-      source_folder:
-        description: "Folder in the repo that holds the ROM files"
+      mediafire_url:
+        description: "MediaFire page link"
         required: true
-        default: "stock-rom"
+        default: "https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
         type: string
 
 jobs:
   unpack:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 300
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3 curl
+          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3
           curl -L -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
 
-      - name: Check source files
+      - name: Resolve MediaFire direct link
         run: |
-          ls -lh "${{ inputs.source_folder }}"
-          test -d "${{ inputs.source_folder }}" || (echo "::error::folder not found" && exit 1)
-
-      # 1. تحويل system إلى صورة ext4 خام
-      - name: Prepare system image
-        run: |
-          SRC="${{ inputs.source_folder }}"
-          if [ -f "$SRC/system.img" ]; then
-            simg2img "$SRC/system.img" system.raw.img || cp "$SRC/system.img" system.raw.img
-          elif [ -f "$SRC/system.new.dat" ]; then
-            python3 sdat2img.py "$SRC/system.transfer.list" "$SRC/system.new.dat" system.raw.img
-          else
-            echo "::error::No system image found"; exit 1
+          curl -sL -A "Mozilla/5.0" "${{ inputs.mediafire_url }}" -o page.html
+          DIRECT=$(grep -oE 'https://download[^"]+' page.html | head -1)
+          if [ -z "$DIRECT" ]; then
+            echo "::error::Direct link not found on MediaFire page"
+            exit 1
           fi
-          ls -lh system.raw.img
+          echo "DIRECT=$DIRECT" >> $GITHUB_ENV
 
-      # 2. تحويل data إلى صورة ext4 خام (يدعم data.img و userdata.img و data.new.dat)
-      - name: Prepare data image
+      - name: Download ROM
         run: |
-          SRC="${{ inputs.source_folder }}"
-          if [ -f "$SRC/data.img" ]; then
-            simg2img "$SRC/data.img" data.raw.img || cp "$SRC/data.img" data.raw.img
-          elif [ -f "$SRC/userdata.img" ]; then
-            simg2img "$SRC/userdata.img" data.raw.img || cp "$SRC/userdata.img" data.raw.img
-          elif [ -f "$SRC/data.new.dat" ]; then
-            python3 sdat2img.py "$SRC/data.transfer.list" "$SRC/data.new.dat" data.raw.img
+          curl -L -A "Mozilla/5.0" -o stock.zip "$DIRECT"
+          ls -lh stock.zip
+          unzip -tq stock.zip
+
+      - name: Unzip ROM completely
+        run: |
+          mkdir -p rom
+          unzip -q stock.zip -d rom
+          find rom -type f -exec ls -lh {} \;
+
+      # system: من system.img أو system.new.dat
+      - name: Unpack system
+        run: |
+          mkdir -p out/system
+          if [ -f rom/system.img ]; then
+            simg2img rom/system.img system.raw.img || cp rom/system.img system.raw.img
+          elif [ -f rom/system.new.dat ]; then
+            python3 sdat2img.py rom/system.transfer.list rom/system.new.dat system.raw.img
           else
-            echo "::warning::No data image found, skipping"
-            exit 0
+            echo "::error::No system image or system.new.dat found"; exit 1
           fi
-          ls -lh data.raw.img
-
-      # 3. فك system و data إلى مجلدات
-      - name: Extract folders
-        run: |
-          mkdir -p out/system out/data
-          7z x -y system.raw.img -oout/system > /dev/null || true
-          if [ -f data.raw.img ]; then 7z x -y data.raw.img -oout/data > /dev/null || true; fi
+          7z x -y system.raw.img -oout/system > /dev/null
           echo "system files: $(find out/system -type f | wc -l)"
-          echo "data files: $(find out/data -type f 2>/dev/null | wc -l)"
-          ls out/system
-          ls out/data 2>/dev/null || true
 
-      # 4. ضغط كل جزء في zip منفصل
-      - name: Pack zips
+      # data: من data.img أو data.new.dat أو userdata.img
+      - name: Unpack data
         run: |
-          cd out/system && zip -qr ../../system-unpacked.zip . && cd ../..
-          if [ -d out/data ] && [ "$(ls -A out/data)" ]; then
-            cd out/data && zip -qr ../../data-unpacked.zip . && cd ../..
+          mkdir -p out/data
+          if [ -f rom/data.img ]; then
+            simg2img rom/data.img data.raw.img || cp rom/data.img data.raw.img
+          elif [ -f rom/userdata.img ]; then
+            simg2img rom/userdata.img data.raw.img || cp rom/userdata.img data.raw.img
+          elif [ -f rom/data.new.dat ]; then
+            python3 sdat2img.py rom/data.transfer.list rom/data.new.dat data.raw.img
+          else
+            echo "::warning::No data image found"; exit 0
           fi
+          7z x -y data.raw.img -oout/data > /dev/null
+          echo "data files: $(find out/data -type f | wc -l)"
+
+      - name: Pack results
+        run: |
+          (cd rom && zip -qr ../full-rom-unzipped.zip .)
+          (cd out/system && zip -qr ../../system-unpacked.zip .)
+          (cd out/data && zip -qr ../../data-unpacked.zip .) || true
           ls -lh *.zip
 
-      - name: Upload results
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: system-and-data-unpacked
+          name: rom-unpacked
           path: |
+            full-rom-unzipped.zip
             system-unpacked.zip
             data-unpacked.zip
           retention-days: 14
