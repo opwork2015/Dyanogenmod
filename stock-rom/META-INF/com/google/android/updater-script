@@ -1,0 +1,46 @@
+#ASSERT
+assert(getprop("ro.product.device") == "j5nlte" || getprop("ro.build.product") == "j5nlte" ||
+	abort("This package is for \"j5nlte\" devices; this is a \"" + getprop("ro.product.device") + "\"."););
+unmount("/system");
+ui_print(" ");
+ui_print(" ");
+ui_print("Stock ROM Advanced Installer");
+ui_print("Built with SuperR's Kitchen");
+ui_print("Credits");
+ui_print("@SuperR. for his nice kitchen");
+ui_print("@aapav01 for his TWRP recovery");
+ui_print("@Force (me :p) for doing this rom");
+ui_print("Enjoy!");
+ui_print(" ");
+ui_print(" ");
+ifelse(is_mounted("/system"), unmount("/system"));
+package_extract_dir("install", "/tmp/install");
+set_metadata_recursive("/tmp/install", "uid", 0, "gid", 0, "dmode", 0755, "fmode", 0644);
+set_metadata_recursive("/tmp/install/bin", "uid", 0, "gid", 0, "dmode", 0755, "fmode", 0755);
+mount("ext4", "EMMC", "/dev/block/bootdevice/by-name/system", "/system", "");
+run_program("/tmp/install/bin/backuptool.sh", "backup");
+unmount("/system");
+show_progress(0.750000, 0);
+ui_print("Extracting system...");
+ui_print(" ");
+block_image_update("/dev/block/bootdevice/by-name/system", package_extract_file("system.transfer.list"), "system.new.dat", "system.patch.dat");
+show_progress(0.020000, 10);
+mount("ext4", "EMMC", "/dev/block/bootdevice/by-name/system", "/system", "");
+run_program("/tmp/install/bin/backuptool.sh", "restore");
+unmount("/system");
+ui_print("Extracting boot image...");
+ui_print(" ");
+show_progress(0.050000, 5);
+package_extract_file("boot.img", "/dev/block/bootdevice/by-name/boot");
+#ROOT
+ui_print("Installing SuperSU..."); ui_print(" ");
+package_extract_dir("supersu", "/tmp/supersu");
+run_program("/sbin/busybox", "unzip", "/tmp/supersu/BETA-SuperSU-v2.66.zip", "META-INF/com/google/android/*", "-d", "/tmp/supersu");
+run_program("/sbin/busybox", "sh", "/tmp/supersu/META-INF/com/google/android/update-binary", "dummy", "1", "/tmp/supersu/BETA-SuperSU-v2.66.zip");
+#BUSYBOX
+ui_print("Installing Busybox..."); ui_print(" ");
+package_extract_dir("busybox", "/tmp/busybox");
+run_program("/sbin/busybox", "unzip", "/tmp/busybox/UPDATE-Busybox.Installer.v1.24.1-ALL-signed.zip", "META-INF/com/google/android/*", "-d", "/tmp/busybox");
+run_program("/sbin/busybox", "sh", "/tmp/busybox/META-INF/com/google/android/update-binary", "dummy", "1", "/tmp/busybox/UPDATE-Busybox.Installer.v1.24.1-ALL-signed.zip");
+show_progress(0.200000, 10);
+ui_print("Stock ROM Advanced Installed");
