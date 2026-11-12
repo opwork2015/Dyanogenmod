@@ -1,50 +1,57 @@
-name: Merge device, vendor and kernel
+name: Assemble flashable zip
 
 on:
   workflow_dispatch:
 
 jobs:
-  merge:
+  assemble:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
-      # 1. تحميل شجرة الجهاز المشتركة
-      - name: Clone device tree
-        run: |
-          mkdir -p merged/device/samsung
-          git clone --depth=1 -b cm-12.1 https://github.com/nikolaoskalomiris/android_device_samsung_j5-common.git merged/device/samsung/j5-common
+      # 1. تحميل المستودع الحالي (فيه flashable/META-INF)
+      - name: Checkout
+        uses: actions/checkout@v4
 
       # 2. تحميل ملفات الـ vendor
       - name: Clone vendor blobs
         run: |
-          mkdir -p merged/vendor/samsung
-          git clone --depth=1 -b cm-12.1 https://github.com/nikolaoskalomiris/proprietary_vendor_samsung_j5nltexx.git merged/vendor/samsung/j5nltexx
+          git clone --depth=1 -b cm-12.1 https://github.com/nikolaoskalomiris/proprietary_vendor_samsung_j5nltexx.git vendor-src
 
-      # 3. تحميل الكيرنل
-      - name: Clone kernel
+      # 3. نسخ ملفات الـ vendor إلى مجلد system داخل الحزمة
+      - name: Copy vendor into system
         run: |
-          mkdir -p merged/kernel/samsung
-          git clone --depth=1 https://github.com/DJSteve/kernel_j500fn_djsteve.git merged/kernel/samsung/msm8916
+          mkdir -p flashable/system
+          if [ -d vendor-src/proprietary ]; then
+            cp -r vendor-src/proprietary/. flashable/system/
+          else
+            cp -r vendor-src/. flashable/system/
+          fi
+          rm -rf flashable/system/.git
+          find flashable/system -type f | wc -l
 
-      # 4. التحقق من أن الملفات الأساسية موجودة
-      - name: Verify merged tree
+      # 4. كتابة سكربت التثبيت
+      - name: Write updater-script
         run: |
-          test -f merged/device/samsung/j5-common/BoardConfigCommon.mk || (echo "::error::missing BoardConfigCommon.mk" && exit 1)
-          test -f merged/vendor/samsung/j5nltexx/j5nltexx-vendor.mk || (echo "::error::missing vendor makefile" && exit 1)
-          test -d merged/kernel/samsung/msm8916/arch || (echo "::error::missing kernel arch folder" && exit 1)
-          echo "All three parts found"
-          du -sh merged/*
+          mkdir -p flashable/META-INF/com/google/android
+          cat > flashable/META-INF/com/google/android/updater-script << 'EOF'
+          ui_print("Installing DyanogenMod j5lte");
+          mount("ext4", "EMMC", "/dev/block/bootdevice/by-name/system", "/system");
+          package_extract_dir("system", "/system");
+          unmount("/system");
+          ui_print("System installed");
+          EOF
 
-      # 5. ضغط الناتج في ملف واحد ورفعه
-      - name: Pack into one zip
+      # 5. ضغط الحزمة كملف zip واحد
+      - name: Pack flashable zip
         run: |
-          cd merged && zip -qr ../merged-tree.zip . && cd ..
-          ls -lh merged-tree.zip
+          cd flashable && zip -qr ../dyanogenmod-j5lte-flashable.zip . && cd ..
+          ls -lh dyanogenmod-j5lte-flashable.zip
 
-      - name: Upload merged tree
+      # 6. رفع الملف
+      - name: Upload flashable zip
         uses: actions/upload-artifact@v4
         with:
-          name: merged-tree
-          path: merged-tree.zip
+          name: dyanogenmod-j5lte-flashable
+          path: dyanogenmod-j5lte-flashable.zip
           retention-days: 14
