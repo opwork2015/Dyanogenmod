@@ -1,4 +1,4 @@
-name: Merge system.zip
+name: Merge device, vendor and kernel
 
 on:
   workflow_dispatch:
@@ -6,48 +6,45 @@ on:
 jobs:
   merge:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
-      # 1. تحميل المستودع
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # 2. التحقق من وجود الملف المطلوب
-      - name: Check input
+      # 1. تحميل شجرة الجهاز المشتركة
+      - name: Clone device tree
         run: |
-          test -f input/system.zip || (echo "::error::input/system.zip not found" && exit 1)
-          ls -lh input/
+          mkdir -p merged/device/samsung
+          git clone --depth=1 -b cm-12.1 https://github.com/nikolaoskalomiris/android_device_samsung_j5-common.git merged/device/samsung/j5-common
 
-      # 3. فك system.zip داخل مجلد مؤقت
-      - name: Extract system.zip
+      # 2. تحميل ملفات الـ vendor
+      - name: Clone vendor blobs
         run: |
-          mkdir -p tmp
-          unzip -q input/system.zip -d tmp
-          echo "Extracted files:"
-          find tmp -type f | head -50
+          mkdir -p merged/vendor/samsung
+          git clone --depth=1 -b cm-12.1 https://github.com/nikolaoskalomiris/proprietary_vendor_samsung_j5nltexx.git merged/vendor/samsung/j5nltexx
 
-      # 4. إنشاء مجلد النظام الأساسي (إن لم يكن موجوداً) ودمج الملفات فيه
-      # الدمج يضيف الملفات الجديدة ويستبدل الملفات المتطابقة الأسماء
-      - name: Merge into base system
+      # 3. تحميل الكيرنل
+      - name: Clone kernel
         run: |
-          mkdir -p base/system
-          cp -r tmp/system/. base/system/
-          echo "Merged. Total files:"
-          find base -type f | wc -l
+          mkdir -p merged/kernel/samsung
+          git clone --depth=1 https://github.com/DJSteve/kernel_j500fn_djsteve.git merged/kernel/samsung/msm8916
 
-      # 5. إعادة الضغط في ملف جديد
-      - name: Repack merged system
+      # 4. التحقق من أن الملفات الأساسية موجودة
+      - name: Verify merged tree
         run: |
-          cd base
-          zip -qr ../merged-system.zip system
-          cd ..
-          ls -lh merged-system.zip
+          test -f merged/device/samsung/j5-common/BoardConfigCommon.mk || (echo "::error::missing BoardConfigCommon.mk" && exit 1)
+          test -f merged/vendor/samsung/j5nltexx/j5nltexx-vendor.mk || (echo "::error::missing vendor makefile" && exit 1)
+          test -d merged/kernel/samsung/msm8916/arch || (echo "::error::missing kernel arch folder" && exit 1)
+          echo "All three parts found"
+          du -sh merged/*
 
-      # 6. رفع الناتج
-      - name: Upload merged zip
+      # 5. ضغط الناتج في ملف واحد ورفعه
+      - name: Pack into one zip
+        run: |
+          cd merged && zip -qr ../merged-tree.zip . && cd ..
+          ls -lh merged-tree.zip
+
+      - name: Upload merged tree
         uses: actions/upload-artifact@v4
         with:
-          name: merged-system
-          path: merged-system.zip
+          name: merged-tree
+          path: merged-tree.zip
           retention-days: 14
