@@ -1,4 +1,4 @@
-name: Download stock ROM
+name: Download, unzip and commit stock ROM
 
 on:
   workflow_dispatch:
@@ -8,13 +8,26 @@ on:
         required: true
         default: "https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
         type: string
+      target_folder:
+        description: "Folder in the repo to store the unzipped ROM"
+        required: true
+        default: "stock-rom"
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
-  download:
+  download-unzip-commit:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
       # 1. استخراج الرابط المباشر من صفحة MediaFire
       - name: Resolve direct link
         run: |
@@ -25,29 +38,39 @@ jobs:
             exit 1
           fi
           echo "DIRECT=$DIRECT" >> $GITHUB_ENV
-          echo "Direct link found"
 
       # 2. تنزيل الملف
       - name: Download ROM
         run: |
           curl -L -A "Mozilla/5.0" -o stock.zip "$DIRECT"
           ls -lh stock.zip
-          file stock.zip
-
-      # 3. التحقق من أن الملف zip صالح
-      - name: Verify zip
-        run: |
           unzip -tq stock.zip
-          echo "MD5: $(md5sum stock.zip)"
 
-      # 4. عرض المحتويات للتأكد من النوع
-      - name: List contents
-        run: unzip -l stock.zip | head -60
+      # 3. فك الملف داخل مجلد الهدف
+      - name: Unzip ROM
+        run: |
+          mkdir -p "${{ inputs.target_folder }}"
+          unzip -q stock.zip -d "${{ inputs.target_folder }}"
+          find "${{ inputs.target_folder }}" -type f -exec ls -lh {} \; | head -80
 
-      # 5. رفع الملف
-      - name: Upload ROM
-        uses: actions/upload-artifact@v4
-        with:
-          name: stock-rom
-          path: stock.zip
-          retention-days: 7
+      # 4. حذف الملفات الأكبر من 95MB لأن GitHub يرفض ما فوق 100MB
+      - name: Remove files larger than 95MB
+        run: |
+          find "${{ inputs.target_folder }}" -type f -size +95M -print -delete > too_big.txt || true
+          if [ -s too_big.txt ]; then
+            echo "::warning::These files were skipped because GitHub limits files to 100MB:"
+            cat too_big.txt
+          fi
+
+      # 5. الالتزام بالمستودع ورفع الملفات
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.target_folder }}"
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+          else
+            git commit -m "Add unzipped stock ROM to ${{ inputs.target_folder }}"
+            git push
+          fi
