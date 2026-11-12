@@ -1,7 +1,16 @@
-name: Download, unzip and unpack ROM
+name: Stock ROM to rom folder
 
 on:
   workflow_dispatch:
+    inputs:
+      mediafire_url:
+        description: "MediaFire page link"
+        required: true
+        default: "https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   rom:
@@ -9,72 +18,72 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3 curl unzip
-          curl -L -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
+          sudo apt-get install -y android-sdk-libsparse-utils p7zip-full python3 unzip
+          curl -sL -o sdat2img.py https://raw.githubusercontent.com/xpirt/sdat2img/master/sdat2img.py
 
+      # 1. استخراج الرابط المباشر من صفحة MediaFire وتنزيل الملف
       - name: Download from MediaFire
         run: |
-          URL="https://www.mediafire.com/download/swq21w929oz1udm/Stock_ROM_Advanced.zip"
-          curl -sL -A "Mozilla/5.0" "$URL" -o page.html
+          curl -sL -A "Mozilla/5.0" "${{ inputs.mediafire_url }}" -o page.html
           DIRECT=$(grep -oE 'https://download[^"]+' page.html | head -1)
-          if [ -z "$DIRECT" ]; then
-            echo "::error::Direct link not found on MediaFire page"
-            exit 1
-          fi
-          curl -L -A "Mozilla/5.0" -o Stock_ROM_Advanced.zip "$DIRECT"
-          ls -lh Stock_ROM_Advanced.zip
-          unzip -tq Stock_ROM_Advanced.zip
+          test -n "$DIRECT" || (echo "::error::direct link not found" && exit 1)
+          curl -L -A "Mozilla/5.0" -o stock.zip "$DIRECT"
+          ls -lh stock.zip
+          unzip -tq stock.zip
 
-      - name: Unzip ROM fully into rom/
+      # 2. فك الملف كاملاً دون تخفيف داخل مجلد rom
+      - name: Unzip everything into rom/
         run: |
           mkdir -p rom
-          unzip -q Stock_ROM_Advanced.zip -d rom
-          find rom -maxdepth 2 -exec ls -ld {} \; | head -100
+          unzip -q stock.zip -d rom
+          find rom -maxdepth 2 | head -100
 
-      - name: Unpack system into rom/system
+      # 3. فك system و data من الصور أو صيغة sdat
+      - name: Extract system and data
         run: |
-          mkdir -p rom/system
-          SRC=$(find rom -name "system.img" -o -name "system.new.dat" | head -1)
-          if [ -n "$(find rom -name 'system.img' | head -1)" ]; then
-            IMG=$(find rom -name "system.img" | head -1)
-            simg2img "$IMG" system.raw.img || cp "$IMG" system.raw.img
-          elif [ -n "$(find rom -name 'system.new.dat' | head -1)" ]; then
-            LIST=$(find rom -name "system.transfer.list" | head -1)
-            DAT=$(find rom -name "system.new.dat" | head -1)
-            python3 sdat2img.py "$LIST" "$DAT" system.raw.img
-          else
-            echo "::error::No system image found in ROM"
-            exit 1
-          fi
-          7z x -y system.raw.img -orom/system > /dev/null || true
-          echo "system files: $(find rom/system -type f | wc -l)"
+          mkdir -p rom/_extracted/system rom/_extracted/data
 
-      - name: Unpack data into rom/data
+          # system
+          if [ -f rom/system.img ]; then
+            simg2img rom/system.img system.raw.img || cp rom/system.img system.raw.img
+          elif [ -f rom/system.new.dat ]; then
+            python3 sdat2img.py rom/system.transfer.list rom/system.new.dat system.raw.img
+          fi
+          [ -f system.raw.img ] && 7z x -y system.raw.img -orom/_extracted/system > /dev/null || echo "::warning::system not extracted"
+
+          # data
+          if [ -f rom/data.img ]; then
+            simg2img rom/data.img data.raw.img || cp rom/data.img data.raw.img
+          elif [ -f rom/data.new.dat ]; then
+            python3 sdat2img.py rom/data.transfer.list rom/data.new.dat data.raw.img
+          fi
+          [ -f data.raw.img ] && 7z x -y data.raw.img -orom/_extracted/data > /dev/null || echo "::warning::data not extracted"
+
+          echo "system files: $(find rom/_extracted/system -type f | wc -l)"
+          echo "data files: $(find rom/_extracted/data -type f | wc -l)"
+
+      # 4. حذف الملفات الكبيرة التي يرفضها GitHub (أكبر من 95MB)
+      
+
+      # 5. الالتزام بالمستودع
+      - name: Commit rom folder
         run: |
-          mkdir -p rom/data
-          if [ -n "$(find rom -name 'data.img' | head -1)" ]; then
-            IMG=$(find rom -name "data.img" | head -1)
-            simg2img "$IMG" data.raw.img || cp "$IMG" data.raw.img
-          elif [ -n "$(find rom -name 'userdata.img' | head -1)" ]; then
-            IMG=$(find rom -name "userdata.img" | head -1)
-            simg2img "$IMG" data.raw.img || cp "$IMG" data.raw.img
-          elif [ -n "$(find rom -name 'data.new.dat' | head -1)" ]; then
-            LIST=$(find rom -name "data.transfer.list" | head -1)
-            DAT=$(find rom -name "data.new.dat" | head -1)
-            python3 sdat2img.py "$LIST" "$DAT" data.raw.img
-          else
-            echo "::warning::No data image found, skipping"
-            exit 0
-          fi
-          7z x -y data.raw.img -orom/data > /dev/null || true
-          echo "data files: $(find rom/data -type f | wc -l)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rom
+          git commit -m "Add stock ROM unpacked to rom/" || echo "Nothing to commit"
+          git push
 
-      - name: Upload rom folder
+      # 6. نسخة احتياطية كاملة كـ artifact (بدون حد الـ 100MB)
+      - name: Upload full output as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rom-folder
+          name: rom-full
           path: rom
           retention-days: 14
