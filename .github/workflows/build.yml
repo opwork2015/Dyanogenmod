@@ -1,0 +1,53 @@
+name: Build DyanogenMod j5lte
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # AOSP needs ~300GB disk and 32GB+ RAM; hosted runners cannot do it. Use a self-hosted runner.
+    runs-on: self-hosted
+    timeout-minutes: 720
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex g++-multilib \
+            gcc-multilib git gnupg gperf libncurses5-dev libsdl1.2-dev libssl-dev \
+            libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip \
+            zlib1g-dev openjdk-8-jdk python3 python-is-python3 git-lfs
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure git
+        run: |
+          git config --global user.name "dyanogenmod-bot"
+          git config --global user.email "bot@example.com"
+
+      - name: Init and sync AOSP 8.1
+        run: |
+          mkdir -p ~/android/dyanogenmod && cd ~/android/dyanogenmod
+          ~/bin/repo init -u https://android.googlesource.com/platform/manifest -b android-8.1.0_r81 --depth=1
+          mkdir -p .repo/local_manifests
+          cp $GITHUB_WORKSPACE/local_manifests/*.xml .repo/local_manifests/
+          ~/bin/repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
+
+      - name: Build
+        run: |
+          cd ~/android/dyanogenmod
+          source build/envsetup.sh
+          lunch dyanogenmod_j5lte-userdebug
+          make -j$(nproc) otapackage
+
+      - name: Upload ROM zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dyanogenmod-j5lte
+          path: ~/android/dyanogenmod/out/target/product/j5lte/dyanogenmod-*.zip
+          retention-days: 14
